@@ -1497,3 +1497,260 @@ h3 {
     display: none;
   }
 }
+
+/* ── required documents checklist ─────────────────────────
+   Missing is a prompt, not an error: nothing here is painted red.
+   Amber = we hold the file but cannot read it yet.               */
+.reqs {
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--paper);
+  overflow: hidden;
+}
+.reqhead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s5);
+  padding: var(--s5);
+  border-bottom: 1px solid var(--line);
+}
+.reqhead h2 {
+  margin: 0 0 var(--s1);
+}
+.reqhead p {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+.reqgroup {
+  margin: 0;
+  padding: var(--s3) var(--s5);
+  font-size: var(--t-xs);
+  letter-spacing: var(--caps);
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--canvas);
+  border-bottom: 1px solid var(--line);
+}
+.req {
+  border-bottom: 1px solid var(--line);
+}
+.reqrow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: start;
+  gap: var(--s4);
+  padding: var(--s4) var(--s5);
+}
+.reqrow > .check {
+  margin-top: -1px;
+}
+.reqrow h4 {
+  margin: 0;
+  font-size: var(--t-lg);
+  line-height: var(--lh-snug);
+}
+.req.off .reqrow h4,
+.req.off .reqrow p {
+  color: var(--muted);
+}
+.reqrow p {
+  margin: 2px 0 0;
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+.suggest {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--s2);
+  color: var(--accent-ink);
+}
+.suggest svg {
+  width: 15px;
+  flex: none;
+}
+.reqstate {
+  align-self: start;
+  margin-top: 2px;
+  white-space: nowrap;
+  padding: 4px var(--s2);
+  border-radius: var(--r-pill);
+  font-size: var(--t-sm);
+  background: var(--canvas);
+  color: var(--muted);
+}
+.reqstate.ready {
+  background: var(--oksoft);
+  color: var(--okink);
+}
+.reqstate.unread,
+.reqstate.processing {
+  background: var(--warnsoft);
+  color: var(--warnink);
+}
+.reqrow > .expand-arrow,
+.reqrow > .upload {
+  align-self: start;
+}
+.reqrow > .expand-arrow:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.reqsources {
+  display: grid;
+  gap: var(--s2);
+  padding: 0 var(--s5) var(--s4) 60px;
+  background: color-mix(in srgb, var(--canvas) 55%, var(--paper));
+  border-top: 1px solid var(--line);
+}
+.srcrow {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) 0;
+  border-bottom: 1px solid var(--line);
+}
+.srcrow:last-of-type {
+  border-bottom: 0;
+}
+.srcrow.unread {
+  color: var(--warnink);
+}
+.srcrow > svg {
+  width: 18px;
+  color: var(--muted);
+}
+.srcrow > div {
+  display: grid;
+  min-width: 0;
+}
+.srcrow b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.srcrow small {
+  color: var(--muted);
+}
+.srcrow a {
+  color: var(--accent-ink);
+  font-size: var(--t-sm);
+}
+.srcrow .btn {
+  min-height: 36px;
+  padding: 6px var(--s3);
+  font-size: var(--t-sm);
+}
+.setdate {
+  display: grid;
+  gap: 2px;
+}
+.setdate span {
+  font-size: var(--t-xs);
+  letter-spacing: var(--caps);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.setdate input {
+  height: 34px;
+  padding: 0 var(--s2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-chip);
+  background: var(--paper);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+}
+.reqfoot {
+  padding: var(--s4) var(--s5);
+  font-size: var(--t-sm);
+  color: var(--muted);
+  background: var(--canvas);
+}
+.upload.small {
+  min-height: 36px;
+  padding: 6px var(--s3);
+  font-size: var(--t-sm);
+}
+.upload.small svg {
+  width: 15px;
+}
+@media (max-width: 650px) {
+  .reqrow {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--s3);
+    padding: var(--s4);
+  }
+  .reqrow > .expand-arrow,
+  .reqrow > .upload {
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+  .reqsources {
+    padding: 0 var(--s4) var(--s4);
+  }
+  .srcrow {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .srcrow > svg {
+    display: none;
+  }
+}
+
+/* ── evidence pool (Sources step) ─────────────────────────── */
+.evrow {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s3) var(--s5);
+  border-bottom: 1px solid var(--line);
+}
+.evrow:last-child {
+  border-bottom: 0;
+}
+.evrow.unread {
+  background: var(--warnsoft);
+}
+.evrow > svg {
+  width: 18px;
+  color: var(--muted);
+}
+.evrow > div {
+  display: grid;
+  min-width: 0;
+}
+.evrow b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fname {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--t-xs);
+}
+.evrow .btn {
+  min-height: 36px;
+  padding: 6px var(--s3);
+  font-size: var(--t-sm);
+}
+.evrow .setdate input {
+  height: 32px;
+}
+@media (max-width: 650px) {
+  .evrow {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--s3);
+    padding: var(--s3) var(--s4);
+  }
+  .evrow > svg {
+    display: none;
+  }
+  .evrow .signed,
+  .evrow .setdate {
+    grid-column: 2;
+  }
+}

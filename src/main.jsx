@@ -53,6 +53,63 @@ const FORM_CODE = {
   rad: "RAD",
   lead: "FLD",
 };
+// What this transaction is required to contain, in the order the documents
+// appear in a deal. A requirement is a CATEGORY — the library forms below are
+// the sources that satisfy it. Missing ones are prompts, not errors: the
+// agent decides what applies.
+const REQS = [
+  ["purchase", "Contract chain", "Purchase Agreement", "Main purchase contract", ["rpa"], ""],
+  ["counters", "Contract chain", "Counter Offers", "Signed counter offers that modify the deal", [], "Terms in the audit cite Counter Offer 3 — add it so those terms have a source"],
+  ["addenda", "Contract chain", "Addenda", "Signed amendments and addenda", ["addenda"], ""],
+  ["contingency", "Contract chain", "Contingency Removal", "Signed removal of buyer contingencies", ["counter"], ""],
+  ["representation", "Representation & compensation", "Buyer Representation & Compensation", "Brokerage compensation agreement", ["brbc"], ""],
+  ["agency", "Representation & compensation", "Agency Disclosure", "California requires it before an offer is written", ["agency"], ""],
+  ["commission", "Representation & compensation", "Commission Sheet", "Commission calculation sent to escrow", [], "Pinnacle asks for this on every closed transaction"],
+  ["lead", "Disclosures & reports", "Lead-Based Paint Disclosure", "Federal rule for pre-1978 housing", [], "Property was built in 1956 — the federal rule applies"],
+  ["tds", "Disclosures & reports", "Transfer Disclosure Statement", "California residential resale", [], "Standard on a California resale"],
+  ["nhd", "Disclosures & reports", "Natural Hazard Disclosure", "California residential resale", [], "Standard on a California resale"],
+  ["pest", "Disclosures & reports", "Wood Destroying Pest Report", "Customary for this county", [], "Customary in Los Angeles County"],
+  ["advisories", "Disclosures & reports", "Statewide & local advisories", "Buyer/seller, local area, investigation, fair housing", ["sbsa", "sfv", "bia", "fhda"], ""],
+  ["acks", "Disclosures & reports", "Broker acknowledgements", "Affiliated business, dual representation, realtor acknowledgement, affidavit", ["aba", "prbs", "rad", "aeis"], ""],
+  ["settlement", "Closing", "Settlement Statement", "Final closing statement", [], "Needed before the file can be closed out"],
+  ["escrow", "Closing", "Escrow Instructions", "Issued by escrow at opening", [], "Escrow usually issues these at opening"],
+].map((x) => ({
+  id: x[0],
+  group: x[1],
+  name: x[2],
+  desc: x[3],
+  docs: x[4],
+  suggest: x[5],
+  applies: true,
+}));
+const REQ_GROUPS = [
+  "Contract chain",
+  "Representation & compensation",
+  "Disclosures & reports",
+  "Closing",
+];
+
+// Signing dates drive precedence: a later signed document supersedes an
+// earlier one. A source with no date cannot supersede anything.
+const SIGNED = {
+  rpa: "2026-08-02",
+  brbc: "2026-07-28",
+  sbsa: "2026-08-02",
+  sfv: "2026-08-02",
+  bia: "2026-08-02",
+  fhda: "2026-08-02",
+  counter: "2026-08-05",
+  aba: "2026-08-02",
+  aeis: "2026-08-02",
+  addenda: "2026-08-12",
+  prbs: "2026-08-02",
+  rad: "2026-08-02",
+  // agency: signed page was scanned without a date
+};
+// The Pinnacle Addendum arrived as a flat scan — no text layer, so nothing
+// in it can be cited. This is the document that would settle the
+// compensation conflict, which is exactly why it has to be fixed first.
+const READABLE = { addenda: false };
 const docs0 = [
   [
     "rpa",
@@ -166,8 +223,15 @@ const docs0 = [
   file: x[2],
   type: x[3],
   present: !!x[4],
-  selected: !!x[4],
+  selected: !!x[4] && READABLE[x[0]] !== false,
   pages: x[5],
+  // a source is only evidence if the engine can read it, and it can only
+  // supersede another document if we know when it was signed
+  signed: SIGNED[x[0]] || "",
+  readable: READABLE[x[0]] !== false,
+  origin: "library",
+  status: x[4] ? "matched" : "missing",
+  confidence: x[4] ? 90 + ((x[0].length * 7) % 9) : 0,
 }));
 const groups = [
   {
@@ -364,8 +428,48 @@ function App() {
     [resolved, setResolved] = useState([]),
     [dates, setDates] = useState(dates0),
     [tasks, setTasks] = useState(tasks0),
+    [reqs, setReqs] = useState(REQS),
     [modal, setModal] = useState(),
     [sent, setSent] = useState(false);
+  // Adding a source: the file lands immediately as `processing`, then the
+  // classifier resolves it. `into` pins it to a category the user chose.
+  const addSources = (files, into) => {
+    const added = [...files].map((f, i) => ({
+      code: into ? FORM_CODE[into] : "NEW",
+      id: `up-${Date.now()}-${i}`,
+      name: f.name.replace(/\.[^.]+$/, ""),
+      file: f.name,
+      url: URL.createObjectURL(f),
+      type: into ? docs.find((d) => d.id === into)?.type : "Uploaded",
+      into: into || "",
+      present: true,
+      selected: false,
+      pages: 0,
+      signed: "",
+      readable: true,
+      origin: "upload",
+      status: "processing",
+      confidence: 0,
+    }));
+    setDocs([...docs, ...added]);
+    const ids = added.map((a) => a.id);
+    setTimeout(() => {
+      setDocs((cur) =>
+        cur.map((d) =>
+          ids.includes(d.id)
+            ? {
+                ...d,
+                status: d.into ? "matched" : "needs-review",
+                selected: true,
+                confidence: d.into ? 97 : 71,
+              }
+            : d,
+        ),
+      );
+    }, 900);
+  };
+  const patchDoc = (id, patch) =>
+    setDocs((cur) => cur.map((d) => (d.id === id ? { ...d, ...patch } : d)));
   const go = (n) => {
       setStep(n);
       scrollTo(0, 0);
@@ -375,35 +479,58 @@ function App() {
     <>
       <Top step={step} />
       {step === 1 && <Transactions next={() => go(2)} />}{" "}
-      {step === 2 && <Intake {...pdf} back={() => go(1)} next={() => go(3)} />}{" "}
+      {step === 2 && (
+        <Intake
+          {...pdf}
+          addSources={addSources}
+          back={() => go(1)}
+          next={() => go(3)}
+        />
+      )}{" "}
       {step === 3 && (
         <Classify
           docs={docs}
           setDocs={setDocs}
+          reqs={reqs}
+          setReqs={setReqs}
+          addSources={addSources}
+          patchDoc={patchDoc}
+          setModal={setModal}
           back={() => go(2)}
           next={() => go(4)}
         />
       )}{" "}
       {step === 4 && (
-        <Audit
-          {...pdf}
-          resolved={resolved}
-          setModal={setModal}
+        <Sources
+          docs={docs}
+          setDocs={setDocs}
+          reqs={reqs}
+          addSources={addSources}
+          patchDoc={patchDoc}
           back={() => go(3)}
           next={() => go(5)}
         />
       )}{" "}
       {step === 5 && (
-        <Timeline
+        <Audit
           {...pdf}
-          dates={dates}
-          setDates={setDates}
+          resolved={resolved}
           setModal={setModal}
           back={() => go(4)}
           next={() => go(6)}
         />
       )}{" "}
       {step === 6 && (
+        <Timeline
+          {...pdf}
+          dates={dates}
+          setDates={setDates}
+          setModal={setModal}
+          back={() => go(5)}
+          next={() => go(7)}
+        />
+      )}{" "}
+      {step === 7 && (
         <Tasks
           docs={docs}
           tasks={tasks}
@@ -411,7 +538,7 @@ function App() {
           setModal={setModal}
           sent={sent}
           setSent={setSent}
-          back={() => go(5)}
+          back={() => go(6)}
         />
       )}{" "}
       {modal && (
@@ -424,7 +551,20 @@ function App() {
             setModal();
           }}
           save={(values) => {
-            if (modal.kind === "task") {
+            if (modal.kind === "req") {
+              setReqs([
+                ...reqs,
+                {
+                  id: `req-${Date.now()}`,
+                  group: values.group || "Disclosures & reports",
+                  name: values.name,
+                  desc: values.desc || "Added for this transaction",
+                  docs: [],
+                  suggest: "",
+                  applies: true,
+                },
+              ]);
+            } else if (modal.kind === "task") {
               const t = { ...modal.task, ...values };
               setTasks(
                 tasks.some((x) => x.id === t.id)
@@ -450,9 +590,9 @@ function Top({ step }) {
         <small>AUDIT</small>
       </div>
       <div className="steps">
-        <span>Step {step} of 6</span>
+        <span>Step {step} of 7</span>
         <div>
-          {[1, 2, 3, 4, 5, 6].map((n) => (
+          {[1, 2, 3, 4, 5, 6, 7].map((n) => (
             <i className={n <= step ? "on" : ""} key={n} />
           ))}
         </div>
@@ -544,7 +684,17 @@ const Intro = ({ k, h, p }) => (
     <p>{p}</p>
   </div>
 );
-function Intake({ docs, active, setActive, page, setPage, focus, back, next }) {
+function Intake({
+  docs,
+  active,
+  setActive,
+  page,
+  setPage,
+  focus,
+  addSources,
+  back,
+  next,
+}) {
   return (
     <main className="split">
       <section className="panel">
@@ -576,7 +726,7 @@ function Intake({ docs, active, setActive, page, setPage, focus, back, next }) {
               {docs.filter((d) => d.present).length} Pinnacle forms attached
             </p>
           </div>
-          <UploadBtn />
+          <UploadBtn onFiles={addSources} />
         </div>
         <div className="files">
           {docs
@@ -621,133 +771,393 @@ function Select({ l, v }) {
     </label>
   );
 }
-const UploadBtn = () => (
-  <label className="btn secondary upload">
+const UploadBtn = ({ onFiles, into, label = "Upload more", small }) => (
+  <label className={`btn secondary upload${small ? " small" : ""}`}>
     <Upload />
-    Upload more
-    <input type="file" multiple />
+    {label}
+    <input
+      type="file"
+      multiple
+      accept="application/pdf,image/*"
+      onChange={(e) => {
+        if (e.target.files.length) onFiles(e.target.files, into);
+        e.target.value = "";
+      }}
+    />
   </label>
 );
-function Classify({ docs, setDocs, back, next }) {
-  const n = docs.filter((d) => d.selected).length;
+function Classify({
+  docs,
+  setDocs,
+  reqs,
+  setReqs,
+  addSources,
+  patchDoc,
+  setModal,
+  back,
+  next,
+}) {
   const [expanded, setExpanded] = useState([]);
+  const sourcesFor = (q) => docs.filter((d) => q.docs.includes(d.id) || d.into === q.id);
+  const stateOf = (q) => {
+    if (!q.applies) return "off";
+    const src = sourcesFor(q);
+    if (!src.length) return "none";
+    if (src.some((d) => d.status === "processing")) return "processing";
+    return src.some((d) => d.readable) ? "ready" : "unread";
+  };
+  const active = reqs.filter((r) => r.applies);
+  const ready = active.filter((r) => stateOf(r) === "ready");
+  const chosen = docs.filter((d) => d.selected && d.readable);
+  const toggleReq = (id) =>
+    setReqs(reqs.map((r) => (r.id === id ? { ...r, applies: !r.applies } : r)));
   return (
     <main className="page">
       <div className="intro-row">
         <Intro
-          k="DOCUMENT DETECTION"
-          h="Choose what to include in the audit"
-          p="We classified the transaction files. Confirm the categories or add anything missing."
+          k="STEP 1 OF 2 · COMPLETENESS"
+          h="Match the file against what this transaction needs"
+          p="California · Residential purchase · Buyer side. We mapped the documents already in the transaction onto each requirement. Untick anything that does not apply and upload whatever is still missing."
         />
         <strong>
-          {n}
-          <small>selected</small>
+          {ready.length}/{active.length}
+          <small>with a source</small>
         </strong>
       </div>
-      <div className="classify">
-        {docs.map((d) => {
-          const open = expanded.includes(d.id);
+
+      <div className="reqs">
+        <header className="reqhead">
+          <div>
+            <h2>Required documents</h2>
+            <p>
+              {active.length} apply to this transaction · {chosen.length} source
+              {chosen.length === 1 ? "" : "s"} selected for the audit
+            </p>
+          </div>
+          <Btn
+            secondary
+            onClick={() =>
+              setModal({ kind: "req", title: "Add requirement", task: null })
+            }
+          >
+            <Plus />
+            Add requirement
+          </Btn>
+        </header>
+
+        {REQ_GROUPS.concat(
+          [...new Set(reqs.map((r) => r.group))].filter(
+            (g) => !REQ_GROUPS.includes(g),
+          ),
+        ).map((group) => {
+          const rows = reqs.filter((r) => r.group === group);
+          if (!rows.length) return null;
           return (
-            <article className={!d.present ? "missing" : ""} key={d.id}>
-              <div className="classification-row">
-                <button
-                  aria-label={`${d.selected ? "Exclude" : "Include"} ${d.name}`}
-                  className={d.selected ? "check on" : "check"}
-                  onClick={() =>
-                    d.present &&
-                    setDocs(
-                      docs.map((x) =>
-                        x.id === d.id ? { ...x, selected: !x.selected } : x,
-                      ),
-                    )
-                  }
-                >
-                  {d.selected && <Check />}
-                </button>
-                <FileText />
-                <div>
-                  <small>{d.type}</small>
-                  <h3>{d.name}</h3>
-                  <p>
-                    {d.present
-                      ? `${d.pages} page${d.pages === 1 ? "" : "s"} detected`
-                      : "No matching document found"}
-                  </p>
-                </div>
-                {d.present ? (
-                  <b>AI match · 98%</b>
-                ) : (
-                  <>
-                    <em>Missing</em>
-                    <UploadBtn />
-                  </>
-                )}
-                <button
-                  className={`expand-arrow ${open ? "open" : ""}`}
-                  aria-expanded={open}
-                  aria-label={`${open ? "Collapse" : "Expand"} files in ${d.name}`}
-                  onClick={() =>
-                    setExpanded(
-                      open
-                        ? expanded.filter((id) => id !== d.id)
-                        : [...expanded, d.id],
-                    )
-                  }
-                >
-                  <ChevronRight />
-                </button>
-              </div>
-              {open && (
-                <div className="attached-files">
-                  {d.present ? (
-                    <a
-                      href={`/forms/${d.file}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <span className="pdf-badge">PDF</span>
+            <section key={group}>
+              <h3 className="reqgroup">{group}</h3>
+              {rows.map((q) => {
+                const st = stateOf(q);
+                const src = sourcesFor(q);
+                const open = expanded.includes(q.id);
+                return (
+                  <article className={`req ${st}`} key={q.id}>
+                    <div className="reqrow">
+                      <button
+                        className={q.applies ? "check on" : "check"}
+                        aria-label={`${q.applies ? "Remove" : "Add"} ${q.name}`}
+                        onClick={() => toggleReq(q.id)}
+                      >
+                        {q.applies && <Check />}
+                      </button>
                       <div>
-                        <b>{d.file}</b>
-                        <small>
-                          {d.pages} pages · Pinnacle core form · Included in
-                          audit
-                        </small>
+                        <h4>{q.name}</h4>
+                        <p>{q.desc}</p>
+                        {q.applies && st === "none" && q.suggest && (
+                          <small className="suggest">
+                            <CircleAlert />
+                            {q.suggest}
+                          </small>
+                        )}
                       </div>
-                      <span className="file-state">
-                        <CheckCircle2 /> Matched
+                      <span className={`reqstate ${st}`}>
+                        {st === "off"
+                          ? "Not applicable"
+                          : st === "ready"
+                            ? `${src.length} source${src.length === 1 ? "" : "s"}`
+                            : st === "processing"
+                              ? "Processing"
+                              : st === "unread"
+                                ? "Not readable yet"
+                                : "No source yet"}
                       </span>
-                      <ArrowRight />
-                    </a>
-                  ) : (
-                    <div className="no-files">
-                      <FileText />
-                      <span>
-                        <b>No file attached</b>
-                        <small>
-                          Upload a document to include it in this category.
-                        </small>
-                      </span>
-                      <UploadBtn />
+                      {q.applies && st === "none" ? (
+                        <UploadBtn
+                          small
+                          onFiles={addSources}
+                          into={q.id}
+                          label="Add source"
+                        />
+                      ) : (
+                        <button
+                          className={`expand-arrow ${open ? "open" : ""}`}
+                          aria-expanded={open}
+                          aria-label={`${open ? "Collapse" : "Expand"} ${q.name}`}
+                          disabled={!q.applies}
+                          onClick={() =>
+                            setExpanded(
+                              open
+                                ? expanded.filter((id) => id !== q.id)
+                                : [...expanded, q.id],
+                            )
+                          }
+                        >
+                          <ChevronRight />
+                        </button>
+                      )}
                     </div>
-                  )}
-                </div>
-              )}
-            </article>
+                    {open && q.applies && (
+                      <div className="reqsources">
+                        {src.map((d) => (
+                          <SourceRow
+                            d={d}
+                            key={d.id}
+                            setDocs={setDocs}
+                            docs={docs}
+                            patchDoc={patchDoc}
+                            addSources={addSources}
+                            into={q.id}
+                          />
+                        ))}
+                        <UploadBtn
+                          small
+                          onFiles={addSources}
+                          into={q.id}
+                          label="Add another source"
+                        />
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </section>
           );
         })}
+        <footer className="reqfoot">
+          <b>{active.length}</b> required documents for this audit ·{" "}
+          <b>{ready.length}</b> already have a source
+        </footer>
       </div>
-      <div className="notice">
-        <FileCheck2 />
-        <p>
-          <b>Nothing gets lost.</b> Unselected files remain attached and can
-          join a later audit.
-        </p>
-      </div>
+
       <Foot
         back={back}
         next={next}
-        label={`Start audit with ${n} documents`}
-        disabled={!n}
+        label={`Continue with ${active.length} requirement${active.length === 1 ? "" : "s"}`}
+        disabled={!active.length}
+      />
+    </main>
+  );
+}
+function SourceRow({ d, docs, setDocs, patchDoc, addSources, into }) {
+  return (
+    <div className={`srcrow ${d.readable ? "" : "unread"}`}>
+      <button
+        className={d.selected ? "check on" : "check"}
+        aria-label={`${d.selected ? "Exclude" : "Include"} ${d.file}`}
+        disabled={!d.readable || d.status === "processing"}
+        onClick={() =>
+          setDocs(
+            docs.map((x) =>
+              x.id === d.id ? { ...x, selected: !x.selected } : x,
+            ),
+          )
+        }
+      >
+        {d.selected && <Check />}
+      </button>
+      <FileText />
+      <div>
+        <b>{d.name}</b>
+        <small>
+          {d.file}
+          {d.pages ? ` · ${d.pages} pages` : ""}
+          {d.confidence ? ` · AI match ${d.confidence}%` : ""}
+        </small>
+      </div>
+      <label className="setdate">
+        <span>Signed</span>
+        <input
+          type="date"
+          value={d.signed}
+          onChange={(e) => patchDoc(d.id, { signed: e.target.value })}
+        />
+      </label>
+      {d.status === "processing" ? (
+        <span className="reqstate processing">Reading…</span>
+      ) : d.readable ? (
+        <a href={d.url || `/forms/${d.file}`} target="_blank" rel="noreferrer">
+          Open
+        </a>
+      ) : (
+        <Btn
+          secondary
+          onClick={() => {
+            patchDoc(d.id, { status: "processing" });
+            setTimeout(
+              () =>
+                patchDoc(d.id, {
+                  readable: true,
+                  selected: true,
+                  status: "matched",
+                  pages: d.pages || 1,
+                  confidence: 88,
+                }),
+              1100,
+            );
+          }}
+        >
+          Read this scan
+        </Btn>
+      )}
+    </div>
+  );
+}
+function Sources({ docs, setDocs, reqs, addSources, patchDoc, back, next }) {
+  const groupOf = (d) => {
+    const q = reqs.find((r) => r.docs.includes(d.id) || d.into === r.id);
+    return q ? q.group : "Other evidence";
+  };
+  const present = docs.filter((d) => d.present);
+  const groups = REQ_GROUPS.concat("Other evidence").filter((g) =>
+    present.some((d) => groupOf(d) === g),
+  );
+  const readable = present.filter((d) => d.readable);
+  const chosen = present.filter((d) => d.selected && d.readable);
+  const unread = present.filter((d) => !d.readable);
+  const undated = chosen.filter((d) => !d.signed);
+  const toggle = (d) =>
+    d.readable &&
+    setDocs(
+      docs.map((x) => (x.id === d.id ? { ...x, selected: !x.selected } : x)),
+    );
+  return (
+    <main className="page">
+      <div className="intro-row">
+        <Intro
+          k="STEP 2 OF 2 · EVIDENCE"
+          h="Choose what the audit compares"
+          p="Every selected document becomes evidence the engine can quote. Add anything a term depends on, even if it is not a required document."
+        />
+        <strong>
+          {chosen.length}
+          <small>sources selected</small>
+        </strong>
+      </div>
+
+      <div className="reqs">
+        <header className="reqhead">
+          <div>
+            <h2>Source documents</h2>
+            <p>
+              {readable.length} of {present.length} readable
+              {unread.length
+                ? ` · ${unread.length} still to be read`
+                : ""}
+            </p>
+          </div>
+          <UploadBtn onFiles={addSources} label="Add source" />
+        </header>
+
+        {groups.map((g) => (
+          <section key={g}>
+            <h3 className="reqgroup">{g}</h3>
+            {present
+              .filter((d) => groupOf(d) === g)
+              .map((d) => (
+                <div
+                  className={`evrow${d.readable ? "" : " unread"}`}
+                  key={d.id}
+                >
+                  <button
+                    className={d.selected ? "check on" : "check"}
+                    aria-label={`${d.selected ? "Exclude" : "Include"} ${d.name}`}
+                    disabled={!d.readable || d.status === "processing"}
+                    onClick={() => toggle(d)}
+                  >
+                    {d.selected && <Check />}
+                  </button>
+                  <FileText />
+                  <div>
+                    <b>{d.name}</b>
+                    <small className="fname">{d.file}</small>
+                  </div>
+                  {d.signed ? (
+                    <span className="signed">Signed {d.signed}</span>
+                  ) : (
+                    <label className="setdate">
+                      <span>Signing date</span>
+                      <input
+                        type="date"
+                        value={d.signed}
+                        onChange={(e) =>
+                          patchDoc(d.id, { signed: e.target.value })
+                        }
+                      />
+                    </label>
+                  )}
+                  {d.status === "processing" ? (
+                    <span className="reqstate processing">Reading…</span>
+                  ) : d.readable ? (
+                    <span className="reqstate ready">Readable</span>
+                  ) : (
+                    <Btn
+                      secondary
+                      onClick={() => {
+                        patchDoc(d.id, { status: "processing" });
+                        setTimeout(
+                          () =>
+                            patchDoc(d.id, {
+                              readable: true,
+                              selected: true,
+                              status: "matched",
+                              pages: d.pages || 1,
+                              confidence: 88,
+                            }),
+                          1100,
+                        );
+                      }}
+                    >
+                      Read this scan
+                    </Btn>
+                  )}
+                </div>
+              ))}
+          </section>
+        ))}
+        <footer className="reqfoot">
+          <b>{chosen.length}</b> source{chosen.length === 1 ? "" : "s"} will be
+          compared against each other
+          {undated.length
+            ? ` · ${undated.length} without a signing date cannot supersede an earlier version`
+            : ""}
+        </footer>
+      </div>
+
+      <div className="notice">
+        <FileCheck2 />
+        <p>
+          <b>Sources are one shared pool.</b> The engine works out for itself
+          which documents are relevant to each comparison — a single addendum
+          can support several terms at once. A document with no signing date
+          cannot supersede an earlier one, and one that cannot be read is not
+          evidence at all.
+        </p>
+      </div>
+
+      <Foot
+        back={back}
+        next={next}
+        label={`Start audit with ${chosen.length} source${chosen.length === 1 ? "" : "s"}`}
+        disabled={!chosen.length}
       />
     </main>
   );
@@ -1228,7 +1638,11 @@ function Editor({ data, docs, close, save, remove }) {
         <header>
           <div>
             <span className="kicker">
-              {isTask ? "TASK" : "HUMAN REVIEW"}
+              {data.kind === "req"
+                ? "REQUIREMENT"
+                : isTask
+                  ? "TASK"
+                  : "HUMAN REVIEW"}
             </span>
             <h2>{data.title}</h2>
           </div>
@@ -1242,7 +1656,36 @@ function Editor({ data, docs, close, save, remove }) {
             <p>{data.warning}</p>
           </div>
         )}
-        {isTask ? (
+        {data.kind === "req" ? (
+          <>
+            <label>
+              <span>Requirement name</span>
+              <input
+                autoFocus
+                required
+                value={form.name || ""}
+                onChange={set("name")}
+                placeholder="e.g. HOA Documents"
+              />
+            </label>
+            <label>
+              <span>Group</span>
+              <select value={form.group || ""} onChange={set("group")}>
+                {REQ_GROUPS.map((g) => (
+                  <option key={g}>{g}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Why it is needed</span>
+              <input
+                value={form.desc || ""}
+                onChange={set("desc")}
+                placeholder="Short reason the audit expects it"
+              />
+            </label>
+          </>
+        ) : isTask ? (
           <>
             <label>
               <span>Task name</span>
@@ -1313,7 +1756,15 @@ function Editor({ data, docs, close, save, remove }) {
           <Btn secondary onClick={close}>
             Cancel
           </Btn>
-          <Btn>{isTask ? "Save task" : data.id ? "Resolve & save" : "Add deadline"}</Btn>
+          <Btn>
+            {data.kind === "req"
+              ? "Add requirement"
+              : isTask
+                ? "Save task"
+                : data.id
+                  ? "Resolve & save"
+                  : "Add deadline"}
+          </Btn>
         </footer>
       </form>
     </div>
